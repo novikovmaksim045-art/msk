@@ -1,5 +1,6 @@
 import 'dotenv/config';
 import express from 'express';
+import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import OpenAI from 'openai';
@@ -19,6 +20,16 @@ const client = new OpenAI({
   baseURL: 'https://ai.api.cloud.yandex.net/v1'
 });
 
+let rules = { version: '1.0', rules: [] };
+
+try {
+  rules = JSON.parse(
+    fs.readFileSync(new URL('./rules.json', import.meta.url), 'utf8')
+  );
+} catch (e) {
+  console.log('rules.json not loaded');
+}
+
 app.use(express.json({ limit: '2mb' }));
 app.use(express.static(path.join(__dirname, 'public')));
 
@@ -30,118 +41,377 @@ app.get('/api/health', (req, res) => {
   res.json({
     ok: true,
     yandexApiKeyConfigured: Boolean(apiKey),
-    yandexFolderIdConfigured: Boolean(folderId),
-    folderIdLength: folderId.length,
-    folderIdLast4: folderId.slice(-4)
+    yandexFolderIdConfigured: Boolean(folderId)
   });
 });
 
-// Диагностика YandexGPT прямо через браузер
-app.get('/api/debug-yandex', async (req, res) => {
-  try {
-    const description =
-      String(req.query.description || 'шланг').trim();
+const SYSTEM = `
+Ты ИИ-агент компании МСК-Сертификат.
 
-    const response = await client.chat.completions.create({
-      model: `gpt://${folderId}/yandexgpt/latest`,
+Твоя задача — предварительно определить код ТН ВЭД товара,
+проверить необходимость обязательной разрешительной документации
+и определить возможность оформления отказного письма.
 
-      messages: [
-        {
-          role: 'system',
-          content: `
-Ты эксперт по классификации товаров по ТН ВЭД.
+Работай как эксперт по классификации продукции.
 
-Ответь на русском языке.
+ВАЖНЫЙ ПОРЯДОК РАБОТЫ.
 
-Пока не нужно возвращать JSON.
+ШАГ 1.
 
-Для товара пользователя:
-1. Скажи, что это за товар.
-2. Определи, достаточно ли информации для классификации.
-3. Если информации недостаточно — задай уточняющие вопросы.
-`
-        },
-        {
-          role: 'user',
-          content: description
-        }
-      ],
+Сначала установи, достаточно ли информации о товаре.
 
-      temperature: 0.1,
-      max_tokens: 1200
-    });
+Для классификации могут иметь значение:
 
-    return res.json({
-      ok: true,
-      folderId,
-      response
-    });
+- назначение;
+- материал;
+- состав;
+- конструкция;
+- принцип работы;
+- наличие электрического питания;
+- возрастная категория;
+- область применения;
+- комплектность;
+- является ли товар самостоятельным изделием или частью оборудования.
 
-  } catch (err) {
-    console.error(err);
+Если данных недостаточно, НЕ ПЫТАЙСЯ угадывать код.
 
-    return res.status(500).json({
-      ok: false,
-      error: err?.message || String(err),
-      status: err?.status || null,
-      code: err?.code || null
-    });
+Задай пользователю конкретные уточняющие вопросы.
+
+Максимум 5 вопросов за один раз.
+
+ШАГ 2.
+
+Если информации достаточно:
+
+Предложи наиболее вероятный код ТН ВЭД ЕАЭС.
+
+При наличии реальной неопределенности можно предложить до 3 вариантов.
+
+Для каждого варианта укажи краткую причину классификации.
+
+ШАГ 3.
+
+Проверь возможное применение:
+
+- технических регламентов ЕАЭС;
+- обязательной сертификации;
+- обязательного декларирования;
+- Постановления Правительства РФ № 2425;
+- государственной регистрации;
+- санитарных требований;
+- иных обязательных разрешительных документов.
+
+ШАГ 4.
+
+Отдельно оцени возможность оформления отказного письма.
+
+НЕЛЬЗЯ определять возможность отказного письма только по коду ТН ВЭД.
+
+Необходимо учитывать фактические характеристики и назначение товара.
+
+Если по имеющимся сведениям товар предварительно не подпадает
+под обязательное подтверждение соответствия, результат должен быть:
+
+"Возможно оформить отказное письмо"
+
+После этого предложи:
+
+"Отправить заявку эксперту МСК-Сертификат для оформления отказного письма"
+
+Эксперт получает заявку именно НА ОФОРМЛЕНИЕ.
+Не пиши, что эксперт должен подтверждать решение ИИ.
+
+Если товар явно требует обязательный разрешительный документ,
+не предлагай оформление отказного письма.
+
+Не придумывай нормативные акты, номера пунктов, ГОСТы или решения ЕЭК.
+
+ВЕРНИ ТОЛЬКО JSON.
+
+Структура ответа:
+
+{
+  "status": "need_more_info" или "preliminary_result",
+
+  "product_card": {
+    "name": "",
+    "purpose": "",
+    "materials": "",
+    "construction": "",
+    "power": "",
+    "age_group": "",
+    "scope": "",
+    "completeness": ""
+  },
+
+  "questions": [],
+
+  "tnved": [
+    {
+      "code": "",
+      "confidence": "high",
+      "reason": ""
+    }
+  ],
+
+  "regulatory": [
+    {
+      "area": "",
+      "result": "likely_applies",
+      "reason": ""
+    }
+  ],
+
+  "refusal_letter": {
+    "result": "likely_possible",
+    "reason": ""
+  },
+
+  "application_cta": "",
+
+  "client_text": ""
+}
+
+Допустимые значения:
+
+status:
+- need_more_info
+- preliminary_result
+
+confidence:
+- high
+- medium
+- low
+
+regulatory.result:
+- likely_applies
+- likely_not_applies
+- need_check
+
+refusal_letter.result:
+- likely_possible
+- likely_not_possible
+- need_more_info
+
+Никакого текста до JSON.
+Никакого текста после JSON.
+Не используй markdown.
+Не используй блоки \`\`\`json.
+`;
+
+function localHints(text) {
+  const t = String(text).toLowerCase();
+
+  return (rules.rules || [])
+    .filter(r =>
+      (r.when?.keywords || []).some(k =>
+        t.includes(String(k).toLowerCase())
+      )
+    )
+    .map(r => ({
+      id: r.id,
+      ask: r.ask,
+      comment: r.comment
+    }));
+}
+
+function parseJsonAnswer(content) {
+
+  if (!content) {
+    throw new Error('Пустой ответ YandexGPT');
   }
-});
 
-// Старый интерфейс пока тоже оставляем рабочим
-app.post('/api/analyze', async (req, res) => {
+  if (typeof content === 'object') {
+    return content;
+  }
+
+  let text = String(content).trim();
+
+  // Убираем markdown на случай, если модель всё-таки его добавила.
+  text = text
+    .replace(/^```json\s*/i, '')
+    .replace(/^```\s*/i, '')
+    .replace(/\s*```$/i, '')
+    .trim();
+
   try {
-    const description =
-      String(req.body?.description || '').trim();
+    return JSON.parse(text);
+  } catch (e) {
+    // Ищем JSON внутри ответа.
+  }
 
-    if (!description) {
+  const start = text.indexOf('{');
+  const end = text.lastIndexOf('}');
+
+  if (start !== -1 && end > start) {
+    const possibleJson = text.slice(start, end + 1);
+
+    return JSON.parse(possibleJson);
+  }
+
+  throw new Error('Ответ модели не содержит JSON');
+}
+
+app.post('/api/analyze', async (req, res) => {
+
+  try {
+
+    const {
+      description,
+      answers = {}
+    } = req.body || {};
+
+    const productDescription =
+      String(description || '').trim();
+
+    if (productDescription.length < 2) {
       return res.status(400).json({
         error: 'Опишите товар.'
       });
     }
 
-    const response = await client.chat.completions.create({
-      model: `gpt://${folderId}/yandexgpt/latest`,
+    if (!apiKey || !folderId) {
+      return res.status(500).json({
+        error:
+          'Не настроены YANDEX_API_KEY или YANDEX_FOLDER_ID.'
+      });
+    }
 
-      messages: [
-        {
-          role: 'system',
-          content: `
-Ты эксперт по классификации товаров по ТН ВЭД.
+    const hints = localHints(productDescription);
 
-Ответь на русском языке.
+    const userData = {
+      product: productDescription,
+      previous_answers: answers,
+      internal_hints: hints
+    };
 
-Для товара пользователя:
-1. Определи товар.
-2. Укажи, достаточно ли данных.
-3. Если данных недостаточно, задай уточняющие вопросы.
-`
-        },
-        {
-          role: 'user',
-          content: description
-        }
-      ],
+    const response =
+      await client.chat.completions.create({
 
-      temperature: 0.1,
-      max_tokens: 1200
-    });
+        model:
+          `gpt://${folderId}/yandexgpt/latest`,
 
-    return res.json({
-      debug: true,
-      response
-    });
+        messages: [
+          {
+            role: 'system',
+            content: SYSTEM
+          },
+          {
+            role: 'user',
+            content:
+              JSON.stringify(userData, null, 2)
+          }
+        ],
+
+        temperature: 0.05,
+        max_tokens: 3000
+      });
+
+    const content =
+      response.choices?.[0]?.message?.content;
+
+    console.log(
+      'YANDEX RAW:',
+      content
+    );
+
+    let result;
+
+    try {
+
+      result = parseJsonAnswer(content);
+
+    } catch (parseError) {
+
+      console.error(
+        'PARSE ERROR:',
+        parseError
+      );
+
+      console.error(
+        'RAW CONTENT:',
+        content
+      );
+
+      return res.status(502).json({
+        error:
+          'Не удалось обработать ответ ИИ.',
+        raw: content
+      });
+    }
+
+    // Защита от неполного ответа модели.
+
+    if (!result.status) {
+
+      return res.status(502).json({
+        error:
+          'ИИ вернул неполный результат.',
+        raw: result
+      });
+    }
+
+    if (!Array.isArray(result.questions)) {
+      result.questions = [];
+    }
+
+    if (!Array.isArray(result.tnved)) {
+      result.tnved = [];
+    }
+
+    if (!Array.isArray(result.regulatory)) {
+      result.regulatory = [];
+    }
+
+    if (!result.product_card) {
+      result.product_card = {};
+    }
+
+    if (!result.refusal_letter) {
+
+      result.refusal_letter = {
+        result: 'need_more_info',
+        reason:
+          'Недостаточно информации для оценки.'
+      };
+    }
+
+    // Если отказное возможно,
+    // принудительно добавляем правильный CTA.
+
+    if (
+      result.refusal_letter.result ===
+      'likely_possible'
+    ) {
+
+      result.application_cta =
+        'Отправить заявку эксперту МСК-Сертификат для оформления отказного письма';
+    }
+
+    result.disclaimer =
+      'Результат сформирован автоматически на основании предоставленной информации о товаре.';
+
+    return res.json(result);
 
   } catch (err) {
+
+    console.error(
+      'ANALYZE ERROR:',
+      err
+    );
+
     return res.status(500).json({
-      error: err?.message || String(err)
+      error:
+        err?.message ||
+        'Произошла ошибка при анализе товара.'
     });
   }
 });
 
 app.listen(port, () => {
-  console.log(`TN VED agent started on port ${port}`);
+  console.log(
+    `MSK TN VED Agent started on port ${port}`
+  );
 });
 
 export default app;
