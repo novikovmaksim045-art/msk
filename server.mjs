@@ -17,8 +17,7 @@ const apiKey = (process.env.YANDEX_API_KEY || '').trim();
 
 const client = new OpenAI({
   apiKey,
-  baseURL: 'https://ai.api.cloud.yandex.net/v1',
-  project: folderId
+  baseURL: 'https://ai.api.cloud.yandex.net/v1'
 });
 
 const rules = JSON.parse(
@@ -26,7 +25,6 @@ const rules = JSON.parse(
 );
 
 app.use(express.json({ limit: '2mb' }));
-
 app.use(express.static(path.join(__dirname, 'public')));
 
 app.get('/', (req, res) => {
@@ -34,123 +32,46 @@ app.get('/', (req, res) => {
 });
 
 const SYSTEM = `
-Ты предварительный эксперт МСК-Сертификат по классификации товаров и оценке необходимости разрешительной документации.
+Ты эксперт МСК-Сертификат по предварительной классификации товаров.
 
 Твоя задача:
 
-1. Определить, что представляет собой товар.
+1. Определить товар.
+2. Если информации недостаточно — задать уточняющие вопросы.
+3. Если информации достаточно — предложить вероятные коды ТН ВЭД.
+4. Проверить возможную необходимость:
+- сертификата;
+- декларации;
+- технических регламентов ЕАЭС;
+- ПП РФ №2425;
+- СГР;
+- иных разрешительных документов.
+5. Определить возможность оформления отказного письма.
 
-2. Сформировать карточку товара:
+Нельзя определять возможность отказного письма только по коду ТН ВЭД.
+
+Учитывай:
 - назначение;
-- материал или состав;
-- конструкция;
-- принцип работы;
-- наличие электропитания;
-- возрастная категория;
-- комплектность;
-- область применения.
-
-3. Если информации недостаточно, задай до 5 конкретных уточняющих вопросов.
-
-Не угадывай критически важные характеристики товара.
-
-4. Если информации достаточно, предложи до 3 вероятных кодов ТН ВЭД ЕАЭС.
-
-Для каждого варианта укажи:
-- код;
-- вероятность;
-- краткое объяснение.
-
-Один вариант обозначь как основной.
-
-5. Отдельно проверь возможную необходимость:
-- сертификата соответствия;
-- декларации соответствия;
-- требований технических регламентов ЕАЭС;
-- требований ПП РФ №2425;
-- государственной регистрации;
-- санитарно-гигиенических требований;
-- иных обязательных разрешительных документов.
-
-6. Отдельно определи возможность оформления отказного письма.
-
-ВАЖНО:
-
-Решение о возможности оформления отказного письма нельзя принимать только по коду ТН ВЭД.
-
-Необходимо учитывать:
-- назначение товара;
 - материал;
 - состав;
 - возрастную категорию;
+- конструкцию;
 - принцип работы;
 - область применения;
 - комплектность.
 
-Если каких-либо данных недостаточно и они могут изменить результат, задай уточняющий вопрос.
+Если обязательное подтверждение соответствия предварительно не требуется,
+укажи:
 
-Если по имеющимся данным обязательное подтверждение соответствия не требуется и отсутствуют выявленные препятствия, прямо сообщи:
+"Возможно оформить отказное письмо"
 
-«Возможно оформить отказное письмо».
+и предложи:
 
-После положительного результата предложи:
+"Отправить заявку эксперту МСК-Сертификат для оформления отказного письма".
 
-«Отправить заявку эксперту МСК-Сертификат для оформления отказного письма».
+Если информации недостаточно — задавай конкретные вопросы.
 
-Эксперт не подтверждает решение агента, а принимает заявку непосредственно в оформление.
-
-Не выдумывай:
-- нормативные документы;
-- решения ЕЭК;
-- ГОСТы;
-- номера пунктов;
-- официальные источники.
-
-Если не уверен, укажи необходимость уточнения.
-
-Верни ТОЛЬКО JSON без markdown:
-
-{
-  "status": "need_more_info" | "preliminary_result",
-
-  "product_card": {
-    "name": "",
-    "purpose": "",
-    "materials": "",
-    "construction": "",
-    "power": "",
-    "age_group": "",
-    "scope": "",
-    "completeness": ""
-  },
-
-  "questions": [""],
-
-  "tnved": [
-    {
-      "code": "",
-      "confidence": "high|medium|low",
-      "reason": ""
-    }
-  ],
-
-  "regulatory": [
-    {
-      "area": "ТР ЕАЭС / ПП 2425 / СГР / другое",
-      "result": "likely_applies|likely_not_applies|need_check",
-      "reason": ""
-    }
-  ],
-
-  "refusal_letter": {
-    "result": "likely_possible|likely_not_possible|need_more_info",
-    "reason": ""
-  },
-
-  "application_cta": "",
-
-  "client_text": ""
-}
+Не выдумывай нормативные документы и номера пунктов.
 `;
 
 function localHints(text) {
@@ -165,16 +86,6 @@ function localHints(text) {
       ask: r.ask,
       comment: r.comment
     }));
-}
-
-function extractJson(text) {
-  const cleaned = text
-    .trim()
-    .replace(/^```json\s*/i, '')
-    .replace(/```$/i, '')
-    .trim();
-
-  return JSON.parse(cleaned);
 }
 
 app.get('/api/health', (req, res) => {
@@ -196,7 +107,7 @@ app.post('/api/analyze', async (req, res) => {
 
     if (!description || String(description).trim().length < 3) {
       return res.status(400).json({
-        error: 'Опишите товар.'
+        error: 'Опишите товар подробнее.'
       });
     }
 
@@ -229,6 +140,123 @@ app.post('/api/analyze', async (req, res) => {
         }
       ],
 
+      response_format: {
+        type: 'json_schema',
+        json_schema: {
+          name: 'tnved_analysis',
+          strict: true,
+          schema: {
+            type: 'object',
+            additionalProperties: false,
+            properties: {
+              status: {
+                type: 'string',
+                enum: ['need_more_info', 'preliminary_result']
+              },
+
+              product_card: {
+                type: 'object',
+                additionalProperties: false,
+                properties: {
+                  name: { type: 'string' },
+                  purpose: { type: 'string' },
+                  materials: { type: 'string' },
+                  construction: { type: 'string' },
+                  power: { type: 'string' },
+                  age_group: { type: 'string' },
+                  scope: { type: 'string' },
+                  completeness: { type: 'string' }
+                },
+                required: [
+                  'name',
+                  'purpose',
+                  'materials',
+                  'construction',
+                  'power',
+                  'age_group',
+                  'scope',
+                  'completeness'
+                ]
+              },
+
+              questions: {
+                type: 'array',
+                items: { type: 'string' }
+              },
+
+              tnved: {
+                type: 'array',
+                items: {
+                  type: 'object',
+                  additionalProperties: false,
+                  properties: {
+                    code: { type: 'string' },
+                    confidence: {
+                      type: 'string',
+                      enum: ['high', 'medium', 'low']
+                    },
+                    reason: { type: 'string' }
+                  },
+                  required: ['code', 'confidence', 'reason']
+                }
+              },
+
+              regulatory: {
+                type: 'array',
+                items: {
+                  type: 'object',
+                  additionalProperties: false,
+                  properties: {
+                    area: { type: 'string' },
+                    result: {
+                      type: 'string',
+                      enum: [
+                        'likely_applies',
+                        'likely_not_applies',
+                        'need_check'
+                      ]
+                    },
+                    reason: { type: 'string' }
+                  },
+                  required: ['area', 'result', 'reason']
+                }
+              },
+
+              refusal_letter: {
+                type: 'object',
+                additionalProperties: false,
+                properties: {
+                  result: {
+                    type: 'string',
+                    enum: [
+                      'likely_possible',
+                      'likely_not_possible',
+                      'need_more_info'
+                    ]
+                  },
+                  reason: { type: 'string' }
+                },
+                required: ['result', 'reason']
+              },
+
+              application_cta: { type: 'string' },
+              client_text: { type: 'string' }
+            },
+
+            required: [
+              'status',
+              'product_card',
+              'questions',
+              'tnved',
+              'regulatory',
+              'refusal_letter',
+              'application_cta',
+              'client_text'
+            ]
+          }
+        }
+      },
+
       temperature: 0.1,
       max_tokens: 3500
     });
@@ -239,7 +267,7 @@ app.post('/api/analyze', async (req, res) => {
     let parsed;
 
     try {
-      parsed = extractJson(outputText);
+      parsed = JSON.parse(outputText);
     } catch {
       return res.status(502).json({
         error: 'ИИ вернул ответ в неожиданном формате.',
@@ -248,7 +276,7 @@ app.post('/api/analyze', async (req, res) => {
     }
 
     parsed.disclaimer =
-      'Результат сформирован автоматически на основании предоставленного описания товара. Для оформления отказного письма отправьте заявку эксперту МСК-Сертификат.';
+      'Результат сформирован автоматически на основании предоставленного описания товара.';
 
     return res.json(parsed);
 
