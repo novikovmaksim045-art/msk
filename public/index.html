@@ -2,68 +2,916 @@
 <html lang="ru">
 <head>
   <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Подбор ТН ВЭД — МСК-Сертификат</title>
-  <style>
-    :root{font-family:Inter,Arial,sans-serif;color:#161616;background:#f4f5f7}*{box-sizing:border-box}body{margin:0}.wrap{max-width:980px;margin:40px auto;padding:0 18px}.card{background:#fff;border-radius:18px;padding:28px;box-shadow:0 8px 30px rgba(0,0,0,.08)}h1{margin:0 0 8px;font-size:32px}.sub{color:#666;margin-bottom:22px}.grid{display:grid;grid-template-columns:1fr 1fr;gap:16px}@media(max-width:760px){.grid{grid-template-columns:1fr}}textarea,input{width:100%;padding:13px 14px;border:1px solid #d8dbe0;border-radius:10px;font:inherit}textarea{min-height:150px;resize:vertical}button{margin-top:14px;border:0;border-radius:10px;padding:13px 18px;font:inherit;font-weight:700;cursor:pointer;background:#111;color:#fff}.muted{color:#777;font-size:13px}.result{margin-top:22px;display:none}.box{padding:16px;border:1px solid #e3e5e8;border-radius:12px;margin-top:12px}.pill{display:inline-block;padding:5px 9px;border-radius:999px;background:#eef1f4;font-size:12px;margin-right:6px}.q{margin:8px 0}.error{color:#a40000}.loader{display:none;margin-top:14px}.actions{display:flex;gap:10px;flex-wrap:wrap}.secondary{background:#fff;color:#111;border:1px solid #d8dbe0}.cta{display:inline-block;margin-top:10px;padding:13px 18px;border-radius:10px;background:#111;color:#fff;text-decoration:none;font-weight:700}</style>
-</head>
-<body>
-<div class="wrap">
-  <div class="card">
-    <h1>Проверка товара</h1>
-    <div class="sub">Предварительный подбор кода ТН ВЭД и проверка возможности оформления отказного письма.</div>
-    <label><b>Опишите товар</b></label>
-    <textarea id="description" placeholder="Например: металлические щипцы из нержавеющей стали для углей кальяна, длина 20 см, для взрослых..."></textarea>
-    <div class="muted">Чем точнее назначение, материал, конструкция и возрастная категория, тем точнее результат.</div>
-    <div class="actions"><button id="go">Проверить товар</button><button id="reset" class="secondary">Очистить</button></div>
-    <div class="loader" id="loader">Анализируем товар…</div>
-    <div id="error" class="error"></div>
-    <div class="result" id="result"></div>
-  </div>
-</div>
-<script>
-const $ = id => document.getElementById(id);
-let answers = {};
-$('go').onclick = analyze;
-$('reset').onclick = () => { $('description').value=''; $('result').style.display='none'; $('result').innerHTML=''; $('error').textContent=''; answers={}; };
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
 
-async function analyze(){
-  const description = $('description').value.trim();
-  if(!description) return;
-  $('loader').style.display='block'; $('error').textContent=''; $('result').style.display='none';
-  try{
-    const r = await fetch('/api/analyze',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({description,answers})});
-    const data = await r.json();
-    if(!r.ok) throw new Error(data.error || 'Ошибка');
-    render(data);
-  }catch(e){$('error').textContent=e.message} finally {$('loader').style.display='none'}
-}
-function esc(s=''){return String(s).replace(/[&<>"']/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#039;'}[m]))}
-function render(d){
-  let html = `<div class="box"><b>Ответ клиенту</b><p>${esc(d.client_text||'')}</p></div>`;
-  if(d.questions?.length){
-    html += `<div class="box"><b>Нужно уточнить</b>${d.questions.map((q,i)=>`<div class="q"><label>${esc(q)}</label><input data-q="${i}" placeholder="Ответ"></div>`).join('')}<button onclick="submitAnswers()">Продолжить анализ</button></div>`;
-  }
-  if(d.tnved?.length){html += `<div class="box"><b>Вероятные коды ТН ВЭД</b>${d.tnved.map(x=>`<p><span class="pill">${esc(x.confidence)}</span><b>${esc(x.code)}</b><br>${esc(x.reason)}</p>`).join('')}</div>`}
-  if(d.regulatory?.length){html += `<div class="box"><b>Разрешительная документация</b>${d.regulatory.map(x=>`<p><b>${esc(x.area)}:</b> ${esc(x.result)}<br>${esc(x.reason)}</p>`).join('')}</div>`}
-  if(d.refusal_letter){
-    const labels={likely_possible:'Возможно оформить',likely_not_possible:'Оформление не предусмотрено',need_more_info:'Нужно уточнение'};
-    html += `<div class="box"><b>Отказное письмо</b><p><span class="pill">${esc(labels[d.refusal_letter.result]||d.refusal_letter.result)}</span>${esc(d.refusal_letter.reason)}</p>`;
-    if(d.refusal_letter.result==='likely_possible'){
-      const subject=encodeURIComponent('Заявка на оформление отказного письма');
-      const body=encodeURIComponent(`Здравствуйте! Хочу оформить отказное письмо.\n\nТовар: ${$('description').value.trim()}\n\nПредварительный результат ИИ-агента: возможно оформить отказное письмо.`);
-      html += `<p><b>Отказное письмо возможно оформить.</b> Передайте заявку эксперту МСК-Сертификат для оформления документа.</p><a class="cta" href="mailto:info@msk-sertifikat.ru?subject=${subject}&body=${body}">Отправить заявку эксперту</a>`;
+  <title>Подбор ТН ВЭД и проверка отказного письма — МСК-Сертификат</title>
+
+  <style>
+    * {
+      box-sizing: border-box;
     }
-    html += `</div>`;
+
+    body {
+      margin: 0;
+      font-family: Arial, Helvetica, sans-serif;
+      background: #f4f6f8;
+      color: #171717;
+    }
+
+    .page {
+      max-width: 980px;
+      margin: 0 auto;
+      padding: 36px 18px 60px;
+    }
+
+    .card {
+      background: #fff;
+      border-radius: 18px;
+      padding: 28px;
+      box-shadow: 0 8px 30px rgba(0,0,0,.06);
+      margin-bottom: 18px;
+    }
+
+    h1 {
+      margin: 0 0 8px;
+      font-size: 30px;
+    }
+
+    h2 {
+      margin: 0 0 16px;
+      font-size: 20px;
+    }
+
+    .subtitle {
+      color: #666;
+      margin-bottom: 24px;
+      line-height: 1.5;
+    }
+
+    label {
+      display: block;
+      font-weight: 700;
+      margin-bottom: 8px;
+    }
+
+    textarea,
+    input {
+      width: 100%;
+      border: 1px solid #d8dde3;
+      border-radius: 12px;
+      padding: 14px;
+      font-size: 15px;
+      outline: none;
+      background: #fff;
+    }
+
+    textarea {
+      min-height: 140px;
+      resize: vertical;
+    }
+
+    textarea:focus,
+    input:focus {
+      border-color: #111;
+    }
+
+    .hint {
+      color: #777;
+      font-size: 13px;
+      margin-top: 7px;
+    }
+
+    .actions {
+      display: flex;
+      gap: 10px;
+      flex-wrap: wrap;
+      margin-top: 16px;
+    }
+
+    button {
+      border: 0;
+      border-radius: 10px;
+      padding: 13px 18px;
+      font-size: 15px;
+      font-weight: 700;
+      cursor: pointer;
+    }
+
+    .primary {
+      background: #111;
+      color: #fff;
+    }
+
+    .secondary {
+      background: #fff;
+      color: #111;
+      border: 1px solid #d8dde3;
+    }
+
+    .primary:disabled {
+      opacity: .55;
+      cursor: not-allowed;
+    }
+
+    .hidden {
+      display: none;
+    }
+
+    .loading {
+      margin-top: 14px;
+      color: #555;
+    }
+
+    .error {
+      margin-top: 14px;
+      color: #b42318;
+      font-weight: 600;
+    }
+
+    .result-grid {
+      display: grid;
+      gap: 16px;
+    }
+
+    .result-card {
+      border: 1px solid #e3e7eb;
+      border-radius: 14px;
+      padding: 18px;
+      background: #fff;
+    }
+
+    .result-card h3 {
+      margin: 0 0 12px;
+      font-size: 18px;
+    }
+
+    .question {
+      padding: 12px 14px;
+      border-radius: 10px;
+      background: #f7f8fa;
+      margin-bottom: 10px;
+      line-height: 1.45;
+    }
+
+    .answer-input {
+      margin-top: 8px;
+    }
+
+    .code-row {
+      border-top: 1px solid #edf0f2;
+      padding: 14px 0;
+    }
+
+    .code-row:first-child {
+      border-top: 0;
+      padding-top: 0;
+    }
+
+    .code-main {
+      font-size: 21px;
+      font-weight: 800;
+      letter-spacing: .3px;
+    }
+
+    .badge {
+      display: inline-block;
+      font-size: 12px;
+      font-weight: 700;
+      padding: 4px 8px;
+      border-radius: 999px;
+      background: #eef1f4;
+      margin-left: 8px;
+      vertical-align: middle;
+    }
+
+    .reg-row {
+      padding: 12px 0;
+      border-top: 1px solid #edf0f2;
+    }
+
+    .reg-row:first-child {
+      border-top: 0;
+      padding-top: 0;
+    }
+
+    .reg-title {
+      font-weight: 700;
+      margin-bottom: 4px;
+    }
+
+    .status-good {
+      color: #137333;
+      font-weight: 700;
+    }
+
+    .status-warn {
+      color: #9a6700;
+      font-weight: 700;
+    }
+
+    .status-bad {
+      color: #b42318;
+      font-weight: 700;
+    }
+
+    .success-box {
+      background: #eefbf2;
+      border: 1px solid #b7e4c4;
+      border-radius: 16px;
+      padding: 20px;
+    }
+
+    .success-box h3 {
+      margin: 0 0 8px;
+      color: #137333;
+      font-size: 21px;
+    }
+
+    .success-box p {
+      margin: 0 0 14px;
+      line-height: 1.5;
+    }
+
+    .cta-button {
+      background: #137333;
+      color: #fff;
+      width: 100%;
+      max-width: 420px;
+    }
+
+    .client-text {
+      line-height: 1.6;
+      white-space: pre-line;
+    }
+
+    .small {
+      font-size: 12px;
+      color: #777;
+      margin-top: 12px;
+      line-height: 1.4;
+    }
+
+    .product-meta {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 10px 18px;
+    }
+
+    .meta-item {
+      padding: 10px 0;
+    }
+
+    .meta-label {
+      font-size: 12px;
+      color: #777;
+      margin-bottom: 3px;
+    }
+
+    .meta-value {
+      font-weight: 600;
+    }
+
+    @media (max-width: 700px) {
+      .page {
+        padding: 18px 12px 40px;
+      }
+
+      .card {
+        padding: 20px;
+      }
+
+      h1 {
+        font-size: 25px;
+      }
+
+      .product-meta {
+        grid-template-columns: 1fr;
+      }
+    }
+  </style>
+</head>
+
+<body>
+
+  <div class="page">
+
+    <div class="card">
+      <h1>Проверка товара</h1>
+
+      <div class="subtitle">
+        Предварительный подбор кода ТН ВЭД и проверка возможности оформления отказного письма.
+      </div>
+
+      <label for="description">Опишите товар</label>
+
+      <textarea
+        id="description"
+        placeholder="Например: шланг из ПВХ для кальяна, используется для прохождения дыма от шахты к мундштуку, без армирования, для взрослых"
+      ></textarea>
+
+      <div class="hint">
+        Чем точнее назначение, материал, конструкция и область применения, тем точнее результат.
+      </div>
+
+      <div class="actions">
+        <button id="checkBtn" class="primary">
+          Проверить товар
+        </button>
+
+        <button id="resetBtn" class="secondary">
+          Очистить
+        </button>
+      </div>
+
+      <div id="loading" class="loading hidden">
+        Анализируем товар…
+      </div>
+
+      <div id="error" class="error hidden"></div>
+    </div>
+
+
+    <div id="questionsCard" class="card hidden">
+
+      <h2>Нужно уточнить</h2>
+
+      <div id="questions"></div>
+
+      <div class="actions">
+        <button id="sendAnswersBtn" class="primary">
+          Продолжить проверку
+        </button>
+      </div>
+
+    </div>
+
+
+    <div id="results" class="result-grid hidden">
+
+      <div id="clientTextCard" class="result-card hidden">
+        <h3>Результат проверки</h3>
+        <div id="clientText" class="client-text"></div>
+      </div>
+
+
+      <div id="productCardBlock" class="result-card hidden">
+
+        <h3>Карточка товара</h3>
+
+        <div id="productMeta" class="product-meta"></div>
+
+      </div>
+
+
+      <div id="tnvedCard" class="result-card hidden">
+
+        <h3>Вероятные коды ТН ВЭД</h3>
+
+        <div id="tnvedList"></div>
+
+      </div>
+
+
+      <div id="regulatoryCard" class="result-card hidden">
+
+        <h3>Разрешительная документация</h3>
+
+        <div id="regulatoryList"></div>
+
+      </div>
+
+
+      <div id="refusalCard" class="hidden"></div>
+
+    </div>
+
+  </div>
+
+
+<script>
+
+const $ = id => document.getElementById(id);
+
+let baseDescription = '';
+let collectedAnswers = {};
+
+$('checkBtn').onclick = () => runAnalysis(false);
+$('sendAnswersBtn').onclick = () => runAnalysis(true);
+$('resetBtn').onclick = resetAll;
+
+
+function resetAll() {
+
+  $('description').value = '';
+
+  baseDescription = '';
+  collectedAnswers = {};
+
+  hide('questionsCard');
+  hide('results');
+  hide('error');
+  hide('loading');
+
+  $('questions').innerHTML = '';
+  $('tnvedList').innerHTML = '';
+  $('regulatoryList').innerHTML = '';
+  $('refusalCard').innerHTML = '';
+  $('productMeta').innerHTML = '';
+  $('clientText').innerHTML = '';
+
+}
+
+
+async function runAnalysis(withAnswers) {
+
+  hide('error');
+  show('loading');
+
+  $('checkBtn').disabled = true;
+  $('sendAnswersBtn').disabled = true;
+
+  try {
+
+    if (!withAnswers) {
+
+      baseDescription = $('description').value.trim();
+      collectedAnswers = {};
+
+    } else {
+
+      document.querySelectorAll('[data-question]').forEach(el => {
+
+        const question = el.dataset.question;
+        const value = el.value.trim();
+
+        if (value) {
+          collectedAnswers[question] = value;
+        }
+
+      });
+
+    }
+
+
+    if (!baseDescription) {
+      throw new Error('Опишите товар.');
+    }
+
+
+    const response = await fetch('/api/analyze', {
+
+      method: 'POST',
+
+      headers: {
+        'Content-Type': 'application/json'
+      },
+
+      body: JSON.stringify({
+        description: baseDescription,
+        answers: collectedAnswers
+      })
+
+    });
+
+
+    const data = await response.json();
+
+
+    if (!response.ok) {
+      throw new Error(data.error || 'Ошибка анализа товара.');
+    }
+
+
+    renderResult(data);
+
+  } catch (e) {
+
+    $('error').textContent = e.message || 'Произошла ошибка.';
+    show('error');
+
+  } finally {
+
+    hide('loading');
+
+    $('checkBtn').disabled = false;
+    $('sendAnswersBtn').disabled = false;
+
   }
-  html += `<p class="muted">${esc(d.disclaimer||'')}</p>`;
-  $('result').innerHTML=html; $('result').style.display='block';
-  window.__questions=d.questions||[];
+
 }
-window.submitAnswers = () => {
-  document.querySelectorAll('[data-q]').forEach(inp=>{answers[window.__questions[+inp.dataset.q]]=inp.value.trim()});
-  analyze();
+
+
+function renderResult(data) {
+
+  hide('questionsCard');
+  hide('results');
+
+  if (data.status === 'need_more_info') {
+
+    renderQuestions(data.questions || []);
+    return;
+
+  }
+
+  show('results');
+
+  renderClientText(data);
+  renderProductCard(data.product_card || {});
+  renderTnved(data.tnved || []);
+  renderRegulatory(data.regulatory || []);
+  renderRefusal(data.refusal_letter || {}, data.application_cta || '');
+
 }
+
+
+function renderQuestions(questions) {
+
+  if (!questions.length) {
+
+    $('error').textContent =
+      'Недостаточно данных для проверки товара. Добавьте более подробное описание.';
+
+    show('error');
+    return;
+
+  }
+
+  $('questions').innerHTML = '';
+
+  questions.forEach((question, index) => {
+
+    const wrap = document.createElement('div');
+    wrap.className = 'question';
+
+    const text = document.createElement('div');
+    text.textContent = `${index + 1}. ${question}`;
+
+    const input = document.createElement('input');
+
+    input.className = 'answer-input';
+
+    input.placeholder = 'Введите ответ';
+
+    input.dataset.question = question;
+
+    if (collectedAnswers[question]) {
+      input.value = collectedAnswers[question];
+    }
+
+    wrap.appendChild(text);
+    wrap.appendChild(input);
+
+    $('questions').appendChild(wrap);
+
+  });
+
+  show('questionsCard');
+
+}
+
+
+function renderClientText(data) {
+
+  const text = data.client_text || '';
+
+  if (!text) {
+    hide('clientTextCard');
+    return;
+  }
+
+  $('clientText').textContent = text;
+  show('clientTextCard');
+
+}
+
+
+function renderProductCard(card) {
+
+  const labels = {
+
+    name: 'Товар',
+    purpose: 'Назначение',
+    materials: 'Материал / состав',
+    construction: 'Конструкция',
+    power: 'Электропитание',
+    age_group: 'Возрастная категория',
+    scope: 'Область применения',
+    completeness: 'Комплектность'
+
+  };
+
+
+  const entries = Object.entries(labels)
+    .filter(([key]) => card[key]);
+
+
+  if (!entries.length) {
+
+    hide('productCardBlock');
+    return;
+
+  }
+
+
+  $('productMeta').innerHTML = '';
+
+
+  entries.forEach(([key, label]) => {
+
+    const item = document.createElement('div');
+    item.className = 'meta-item';
+
+    item.innerHTML = `
+      <div class="meta-label">${escapeHtml(label)}</div>
+      <div class="meta-value">${escapeHtml(card[key])}</div>
+    `;
+
+    $('productMeta').appendChild(item);
+
+  });
+
+
+  show('productCardBlock');
+
+}
+
+
+function renderTnved(items) {
+
+  $('tnvedList').innerHTML = '';
+
+  if (!items.length) {
+
+    hide('tnvedCard');
+    return;
+
+  }
+
+
+  items.forEach(item => {
+
+    const row = document.createElement('div');
+    row.className = 'code-row';
+
+    row.innerHTML = `
+      <div>
+        <span class="code-main">${escapeHtml(formatCode(item.code || ''))}</span>
+        <span class="badge">${escapeHtml(confidenceLabel(item.confidence))}</span>
+      </div>
+
+      <div style="margin-top:7px;line-height:1.45">
+        ${escapeHtml(item.reason || '')}
+      </div>
+    `;
+
+    $('tnvedList').appendChild(row);
+
+  });
+
+
+  show('tnvedCard');
+
+}
+
+
+function renderRegulatory(items) {
+
+  $('regulatoryList').innerHTML = '';
+
+  if (!items.length) {
+
+    hide('regulatoryCard');
+    return;
+
+  }
+
+
+  items.forEach(item => {
+
+    const row = document.createElement('div');
+    row.className = 'reg-row';
+
+    const status = regulatoryLabel(item.result);
+
+    row.innerHTML = `
+      <div class="reg-title">
+        ${escapeHtml(item.area || 'Требование')}
+      </div>
+
+      <div class="${status.className}">
+        ${escapeHtml(status.text)}
+      </div>
+
+      <div style="margin-top:5px;line-height:1.45">
+        ${escapeHtml(item.reason || '')}
+      </div>
+    `;
+
+    $('regulatoryList').appendChild(row);
+
+  });
+
+
+  show('regulatoryCard');
+
+}
+
+
+function renderRefusal(refusal, cta) {
+
+  const block = $('refusalCard');
+
+  block.className = '';
+  block.innerHTML = '';
+
+
+  if (!refusal.result) {
+    hide('refusalCard');
+    return;
+  }
+
+
+  if (refusal.result === 'likely_possible') {
+
+    block.className = 'success-box';
+
+    block.innerHTML = `
+      <h3>Возможно оформить отказное письмо</h3>
+
+      <p>
+        ${escapeHtml(
+          refusal.reason ||
+          'По представленным сведениям обязательное подтверждение соответствия предварительно не требуется.'
+        )}
+      </p>
+
+      <button class="cta-button" onclick="sendApplication()">
+        ${escapeHtml(
+          cta ||
+          'Отправить заявку эксперту МСК-Сертификат'
+        )}
+      </button>
+
+      <div class="small">
+        Эксперт получает заявку непосредственно на оформление отказного письма.
+      </div>
+    `;
+
+    show('refusalCard');
+    return;
+
+  }
+
+
+  if (refusal.result === 'likely_not_possible') {
+
+    block.className = 'result-card';
+
+    block.innerHTML = `
+      <h3>Отказное письмо предварительно не подходит</h3>
+
+      <div class="status-bad">
+        ${escapeHtml(refusal.reason || '')}
+      </div>
+    `;
+
+    show('refusalCard');
+    return;
+
+  }
+
+
+  block.className = 'result-card';
+
+  block.innerHTML = `
+    <h3>Нужны дополнительные сведения</h3>
+
+    <div class="status-warn">
+      ${escapeHtml(
+        refusal.reason ||
+        'Для оценки возможности оформления отказного письма недостаточно информации.'
+      )}
+    </div>
+  `;
+
+  show('refusalCard');
+
+}
+
+
+function sendApplication() {
+
+  const subject =
+    'Заявка на оформление отказного письма';
+
+  const body =
+`Добрый день.
+
+Прошу оформить отказное письмо.
+
+Описание товара:
+${baseDescription}
+
+Результат предварительной проверки получен через ИИ-сервис МСК-Сертификат.
+
+Прошу связаться со мной для оформления.`;
+
+  window.location.href =
+    'mailto:info@msk-sertifikat.ru'
+    + '?subject=' + encodeURIComponent(subject)
+    + '&body=' + encodeURIComponent(body);
+
+}
+
+
+function confidenceLabel(value) {
+
+  if (value === 'high') {
+    return 'Высокая вероятность';
+  }
+
+  if (value === 'medium') {
+    return 'Средняя вероятность';
+  }
+
+  if (value === 'low') {
+    return 'Низкая вероятность';
+  }
+
+  return 'Предварительно';
+
+}
+
+
+function regulatoryLabel(value) {
+
+  if (value === 'likely_not_applies') {
+
+    return {
+      text: 'Предварительно не применяется',
+      className: 'status-good'
+    };
+
+  }
+
+  if (value === 'likely_applies') {
+
+    return {
+      text: 'Предварительно применяется',
+      className: 'status-bad'
+    };
+
+  }
+
+  return {
+    text: 'Требуется уточнение',
+    className: 'status-warn'
+  };
+
+}
+
+
+function formatCode(code) {
+
+  const clean =
+    String(code || '').replace(/\D/g, '');
+
+  if (clean.length !== 10) {
+    return code;
+  }
+
+  return (
+    clean.slice(0,4) + ' ' +
+    clean.slice(4,6) + ' ' +
+    clean.slice(6,9) + ' ' +
+    clean.slice(9)
+  );
+
+}
+
+
+function escapeHtml(value) {
+
+  return String(value ?? '')
+    .replaceAll('&', '&amp;')
+    .replaceAll('<', '&lt;')
+    .replaceAll('>', '&gt;')
+    .replaceAll('"', '&quot;')
+    .replaceAll("'", '&#039;');
+
+}
+
+
+function show(id) {
+  $(id).classList.remove('hidden');
+}
+
+
+function hide(id) {
+  $(id).classList.add('hidden');
+}
+
 </script>
+
 </body>
 </html>
