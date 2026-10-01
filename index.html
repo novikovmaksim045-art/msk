@@ -1,0 +1,69 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Подбор ТН ВЭД — МСК-Сертификат</title>
+  <style>
+    :root{font-family:Inter,Arial,sans-serif;color:#161616;background:#f4f5f7}*{box-sizing:border-box}body{margin:0}.wrap{max-width:980px;margin:40px auto;padding:0 18px}.card{background:#fff;border-radius:18px;padding:28px;box-shadow:0 8px 30px rgba(0,0,0,.08)}h1{margin:0 0 8px;font-size:32px}.sub{color:#666;margin-bottom:22px}.grid{display:grid;grid-template-columns:1fr 1fr;gap:16px}@media(max-width:760px){.grid{grid-template-columns:1fr}}textarea,input{width:100%;padding:13px 14px;border:1px solid #d8dbe0;border-radius:10px;font:inherit}textarea{min-height:150px;resize:vertical}button{margin-top:14px;border:0;border-radius:10px;padding:13px 18px;font:inherit;font-weight:700;cursor:pointer;background:#111;color:#fff}.muted{color:#777;font-size:13px}.result{margin-top:22px;display:none}.box{padding:16px;border:1px solid #e3e5e8;border-radius:12px;margin-top:12px}.pill{display:inline-block;padding:5px 9px;border-radius:999px;background:#eef1f4;font-size:12px;margin-right:6px}.q{margin:8px 0}.error{color:#a40000}.loader{display:none;margin-top:14px}.actions{display:flex;gap:10px;flex-wrap:wrap}.secondary{background:#fff;color:#111;border:1px solid #d8dbe0}.cta{display:inline-block;margin-top:10px;padding:13px 18px;border-radius:10px;background:#111;color:#fff;text-decoration:none;font-weight:700}</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="card">
+    <h1>Проверка товара</h1>
+    <div class="sub">Предварительный подбор кода ТН ВЭД и проверка возможности оформления отказного письма.</div>
+    <label><b>Опишите товар</b></label>
+    <textarea id="description" placeholder="Например: металлические щипцы из нержавеющей стали для углей кальяна, длина 20 см, для взрослых..."></textarea>
+    <div class="muted">Чем точнее назначение, материал, конструкция и возрастная категория, тем точнее результат.</div>
+    <div class="actions"><button id="go">Проверить товар</button><button id="reset" class="secondary">Очистить</button></div>
+    <div class="loader" id="loader">Анализируем товар…</div>
+    <div id="error" class="error"></div>
+    <div class="result" id="result"></div>
+  </div>
+</div>
+<script>
+const $ = id => document.getElementById(id);
+let answers = {};
+$('go').onclick = analyze;
+$('reset').onclick = () => { $('description').value=''; $('result').style.display='none'; $('result').innerHTML=''; $('error').textContent=''; answers={}; };
+
+async function analyze(){
+  const description = $('description').value.trim();
+  if(!description) return;
+  $('loader').style.display='block'; $('error').textContent=''; $('result').style.display='none';
+  try{
+    const r = await fetch('/api/analyze',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({description,answers})});
+    const data = await r.json();
+    if(!r.ok) throw new Error(data.error || 'Ошибка');
+    render(data);
+  }catch(e){$('error').textContent=e.message} finally {$('loader').style.display='none'}
+}
+function esc(s=''){return String(s).replace(/[&<>"']/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#039;'}[m]))}
+function render(d){
+  let html = `<div class="box"><b>Ответ клиенту</b><p>${esc(d.client_text||'')}</p></div>`;
+  if(d.questions?.length){
+    html += `<div class="box"><b>Нужно уточнить</b>${d.questions.map((q,i)=>`<div class="q"><label>${esc(q)}</label><input data-q="${i}" placeholder="Ответ"></div>`).join('')}<button onclick="submitAnswers()">Продолжить анализ</button></div>`;
+  }
+  if(d.tnved?.length){html += `<div class="box"><b>Вероятные коды ТН ВЭД</b>${d.tnved.map(x=>`<p><span class="pill">${esc(x.confidence)}</span><b>${esc(x.code)}</b><br>${esc(x.reason)}</p>`).join('')}</div>`}
+  if(d.regulatory?.length){html += `<div class="box"><b>Разрешительная документация</b>${d.regulatory.map(x=>`<p><b>${esc(x.area)}:</b> ${esc(x.result)}<br>${esc(x.reason)}</p>`).join('')}</div>`}
+  if(d.refusal_letter){
+    const labels={likely_possible:'Возможно оформить',likely_not_possible:'Оформление не предусмотрено',need_more_info:'Нужно уточнение'};
+    html += `<div class="box"><b>Отказное письмо</b><p><span class="pill">${esc(labels[d.refusal_letter.result]||d.refusal_letter.result)}</span>${esc(d.refusal_letter.reason)}</p>`;
+    if(d.refusal_letter.result==='likely_possible'){
+      const subject=encodeURIComponent('Заявка на оформление отказного письма');
+      const body=encodeURIComponent(`Здравствуйте! Хочу оформить отказное письмо.\n\nТовар: ${$('description').value.trim()}\n\nПредварительный результат ИИ-агента: возможно оформить отказное письмо.`);
+      html += `<p><b>Отказное письмо возможно оформить.</b> Передайте заявку эксперту МСК-Сертификат для оформления документа.</p><a class="cta" href="mailto:info@msk-sertifikat.ru?subject=${subject}&body=${body}">Отправить заявку эксперту</a>`;
+    }
+    html += `</div>`;
+  }
+  html += `<p class="muted">${esc(d.disclaimer||'')}</p>`;
+  $('result').innerHTML=html; $('result').style.display='block';
+  window.__questions=d.questions||[];
+}
+window.submitAnswers = () => {
+  document.querySelectorAll('[data-q]').forEach(inp=>{answers[window.__questions[+inp.dataset.q]]=inp.value.trim()});
+  analyze();
+}
+</script>
+</body>
+</html>
