@@ -34,44 +34,68 @@ app.get('/', (req, res) => {
 const SYSTEM = `
 Ты эксперт МСК-Сертификат по предварительной классификации товаров.
 
-Твоя задача:
+Работай в два этапа.
 
-1. Определить товар.
-2. Если информации недостаточно — задать уточняющие вопросы.
-3. Если информации достаточно — предложить вероятные коды ТН ВЭД.
-4. Проверить возможную необходимость:
-- сертификата;
-- декларации;
-- технических регламентов ЕАЭС;
-- ПП РФ №2425;
-- СГР;
-- иных разрешительных документов.
-5. Определить возможность оформления отказного письма.
+Если данных недостаточно:
+- не подбирай код окончательно;
+- задай короткие уточняющие вопросы;
+- выясни назначение, материал, конструкцию, область применения, возрастную категорию, наличие питания и комплектность.
+
+Если данных достаточно:
+- предложи наиболее вероятный код ТН ВЭД;
+- при необходимости укажи альтернативные варианты;
+- проверь возможную необходимость обязательной сертификации или декларирования;
+- проверь возможное применение технических регламентов ЕАЭС;
+- проверь ПП РФ №2425;
+- проверь необходимость СГР и иных разрешительных документов;
+- отдельно оцени возможность оформления отказного письма.
 
 Нельзя определять возможность отказного письма только по коду ТН ВЭД.
 
-Учитывай:
-- назначение;
-- материал;
-- состав;
-- возрастную категорию;
-- конструкцию;
-- принцип работы;
-- область применения;
-- комплектность.
+Если обязательное подтверждение соответствия предварительно не требуется, напиши:
+"Возможно оформить отказное письмо".
 
-Если обязательное подтверждение соответствия предварительно не требуется,
-укажи:
-
-"Возможно оформить отказное письмо"
-
-и предложи:
-
+После этого предложи:
 "Отправить заявку эксперту МСК-Сертификат для оформления отказного письма".
 
-Если информации недостаточно — задавай конкретные вопросы.
+Не выдумывай нормативные документы, номера решений, пункты или ГОСТы.
 
-Не выдумывай нормативные документы и номера пунктов.
+Ответ верни ТОЛЬКО в JSON следующей структуры:
+
+{
+  "status": "need_more_info" или "preliminary_result",
+  "product_card": {
+    "name": "",
+    "purpose": "",
+    "materials": "",
+    "construction": "",
+    "power": "",
+    "age_group": "",
+    "scope": "",
+    "completeness": ""
+  },
+  "questions": [],
+  "tnved": [
+    {
+      "code": "",
+      "confidence": "high",
+      "reason": ""
+    }
+  ],
+  "regulatory": [
+    {
+      "area": "",
+      "result": "likely_applies",
+      "reason": ""
+    }
+  ],
+  "refusal_letter": {
+    "result": "likely_possible",
+    "reason": ""
+  },
+  "application_cta": "",
+  "client_text": ""
+}
 `;
 
 function localHints(text) {
@@ -86,6 +110,45 @@ function localHints(text) {
       ask: r.ask,
       comment: r.comment
     }));
+}
+
+function parseModelJson(value) {
+  if (!value) {
+    throw new Error('Пустой ответ модели');
+  }
+
+  // Иногда SDK уже может вернуть объект
+  if (typeof value === 'object') {
+    return value;
+  }
+
+  let text = String(value).trim();
+
+  // Убираем markdown-блоки
+  text = text
+    .replace(/^```json\s*/i, '')
+    .replace(/^```\s*/i, '')
+    .replace(/\s*```$/i, '')
+    .trim();
+
+  // Сначала пробуем обычный JSON
+  try {
+    return JSON.parse(text);
+  } catch {}
+
+  // Если модель добавила текст вокруг JSON — вытаскиваем объект
+  const firstBrace = text.indexOf('{');
+  const lastBrace = text.lastIndexOf('}');
+
+  if (firstBrace !== -1 && lastBrace > firstBrace) {
+    const jsonPart = text.slice(firstBrace, lastBrace + 1);
+
+    try {
+      return JSON.parse(jsonPart);
+    } catch {}
+  }
+
+  throw new Error('Не удалось разобрать JSON модели');
 }
 
 app.get('/api/health', (req, res) => {
@@ -140,138 +203,30 @@ app.post('/api/analyze', async (req, res) => {
         }
       ],
 
-      response_format: {
-        type: 'json_schema',
-        json_schema: {
-          name: 'tnved_analysis',
-          strict: true,
-          schema: {
-            type: 'object',
-            additionalProperties: false,
-            properties: {
-              status: {
-                type: 'string',
-                enum: ['need_more_info', 'preliminary_result']
-              },
-
-              product_card: {
-                type: 'object',
-                additionalProperties: false,
-                properties: {
-                  name: { type: 'string' },
-                  purpose: { type: 'string' },
-                  materials: { type: 'string' },
-                  construction: { type: 'string' },
-                  power: { type: 'string' },
-                  age_group: { type: 'string' },
-                  scope: { type: 'string' },
-                  completeness: { type: 'string' }
-                },
-                required: [
-                  'name',
-                  'purpose',
-                  'materials',
-                  'construction',
-                  'power',
-                  'age_group',
-                  'scope',
-                  'completeness'
-                ]
-              },
-
-              questions: {
-                type: 'array',
-                items: { type: 'string' }
-              },
-
-              tnved: {
-                type: 'array',
-                items: {
-                  type: 'object',
-                  additionalProperties: false,
-                  properties: {
-                    code: { type: 'string' },
-                    confidence: {
-                      type: 'string',
-                      enum: ['high', 'medium', 'low']
-                    },
-                    reason: { type: 'string' }
-                  },
-                  required: ['code', 'confidence', 'reason']
-                }
-              },
-
-              regulatory: {
-                type: 'array',
-                items: {
-                  type: 'object',
-                  additionalProperties: false,
-                  properties: {
-                    area: { type: 'string' },
-                    result: {
-                      type: 'string',
-                      enum: [
-                        'likely_applies',
-                        'likely_not_applies',
-                        'need_check'
-                      ]
-                    },
-                    reason: { type: 'string' }
-                  },
-                  required: ['area', 'result', 'reason']
-                }
-              },
-
-              refusal_letter: {
-                type: 'object',
-                additionalProperties: false,
-                properties: {
-                  result: {
-                    type: 'string',
-                    enum: [
-                      'likely_possible',
-                      'likely_not_possible',
-                      'need_more_info'
-                    ]
-                  },
-                  reason: { type: 'string' }
-                },
-                required: ['result', 'reason']
-              },
-
-              application_cta: { type: 'string' },
-              client_text: { type: 'string' }
-            },
-
-            required: [
-              'status',
-              'product_card',
-              'questions',
-              'tnved',
-              'regulatory',
-              'refusal_letter',
-              'application_cta',
-              'client_text'
-            ]
-          }
-        }
-      },
-
       temperature: 0.1,
       max_tokens: 3500
     });
 
-    const outputText =
-      response.choices?.[0]?.message?.content || '';
+    const message = response.choices?.[0]?.message;
+
+    const rawContent = message?.content ?? '';
+
+    console.log('RAW MODEL RESPONSE:', rawContent);
 
     let parsed;
 
     try {
-      parsed = JSON.parse(outputText);
-    } catch {
+      parsed = parseModelJson(rawContent);
+    } catch (parseError) {
+      console.error('JSON parse error:', parseError);
+      console.error('RAW:', rawContent);
+
       return res.status(502).json({
         error: 'ИИ вернул ответ в неожиданном формате.',
-        raw: outputText
+        raw:
+          typeof rawContent === 'string'
+            ? rawContent
+            : JSON.stringify(rawContent)
       });
     }
 
