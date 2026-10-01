@@ -11,12 +11,14 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
 const port = process.env.PORT || 3000;
-const folderId = process.env.YANDEX_FOLDER_ID;
-const apiKey = process.env.YANDEX_API_KEY;
+
+const folderId = (process.env.YANDEX_FOLDER_ID || '').trim();
+const apiKey = (process.env.YANDEX_API_KEY || '').trim();
 
 const client = new OpenAI({
   apiKey,
-  baseURL: 'https://ai.api.cloud.yandex.net/v1'
+  baseURL: 'https://ai.api.cloud.yandex.net/v1',
+  project: folderId
 });
 
 const rules = JSON.parse(
@@ -37,6 +39,7 @@ const SYSTEM = `
 Твоя задача:
 
 1. Определить, что представляет собой товар.
+
 2. Сформировать карточку товара:
 - назначение;
 - материал или состав;
@@ -47,20 +50,20 @@ const SYSTEM = `
 - комплектность;
 - область применения.
 
-3. Если информации недостаточно, задать до 5 конкретных уточняющих вопросов.
+3. Если информации недостаточно, задай до 5 конкретных уточняющих вопросов.
 
 Не угадывай критически важные характеристики товара.
 
-4. Если информации достаточно, предложить до 3 вероятных кодов ТН ВЭД ЕАЭС.
+4. Если информации достаточно, предложи до 3 вероятных кодов ТН ВЭД ЕАЭС.
 
-Для каждого варианта указать:
+Для каждого варианта укажи:
 - код;
 - вероятность;
 - краткое объяснение.
 
-Один вариант обозначить как основной.
+Один вариант обозначь как основной.
 
-5. Отдельно проверить возможную необходимость:
+5. Отдельно проверь возможную необходимость:
 - сертификата соответствия;
 - декларации соответствия;
 - требований технических регламентов ЕАЭС;
@@ -69,7 +72,7 @@ const SYSTEM = `
 - санитарно-гигиенических требований;
 - иных обязательных разрешительных документов.
 
-6. Отдельно определить возможность оформления отказного письма.
+6. Отдельно определи возможность оформления отказного письма.
 
 ВАЖНО:
 
@@ -168,11 +171,21 @@ function extractJson(text) {
   const cleaned = text
     .trim()
     .replace(/^```json\s*/i, '')
-    .replace(/```$/, '')
+    .replace(/```$/i, '')
     .trim();
 
   return JSON.parse(cleaned);
 }
+
+app.get('/api/health', (req, res) => {
+  res.json({
+    ok: true,
+    yandexApiKeyConfigured: Boolean(apiKey),
+    yandexFolderIdConfigured: Boolean(folderId),
+    folderIdLength: folderId.length,
+    folderIdLast4: folderId.slice(-4)
+  });
+});
 
 app.post('/api/analyze', async (req, res) => {
   try {
@@ -193,10 +206,10 @@ app.post('/api/analyze', async (req, res) => {
       });
     }
 
-    const hints = localHints(description);
+    const hints = localHints(String(description));
 
     const payload = {
-      description,
+      description: String(description).trim(),
       answers,
       internal_rule_hints: hints,
       rules_version: rules.version
@@ -237,12 +250,12 @@ app.post('/api/analyze', async (req, res) => {
     parsed.disclaimer =
       'Результат сформирован автоматически на основании предоставленного описания товара. Для оформления отказного письма отправьте заявку эксперту МСК-Сертификат.';
 
-    res.json(parsed);
+    return res.json(parsed);
 
   } catch (err) {
-    console.error(err);
+    console.error('Analyze error:', err);
 
-    res.status(500).json({
+    return res.status(500).json({
       error:
         err?.message ||
         'Произошла ошибка при анализе товара.'
