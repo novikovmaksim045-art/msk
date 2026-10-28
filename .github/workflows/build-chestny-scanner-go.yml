@@ -64,10 +64,9 @@ jobs:
           Copy-Item "$($root.FullName)\*" tools/chestny-scanner-go/dist/tools/poppler -Recurse
           if (!(Test-Path tools/chestny-scanner-go/dist/tools/poppler/Library/bin/pdftoppm.exe)) { throw "pdftoppm.exe not found" }
 
-      - name: Add app icon and README
+      - name: Add README
         working-directory: tools/chestny-scanner-go
         run: |
-          Copy-Item app.ico dist/app.ico
           @"
           Честный знак — сканер КМ 1.3.0
 
