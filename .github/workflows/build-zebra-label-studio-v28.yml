@@ -1,0 +1,125 @@
+name: Build and Release MSK Zebra Label Studio v2.8
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+    paths:
+      - "zebra-label-studio/v2.8/**"
+      - ".github/workflows/build-zebra-label-studio-v28.yml"
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: windows-latest
+    defaults:
+      run:
+        shell: pwsh
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.23.x"
+
+      - name: Reconstruct v2.8 source archive
+        run: |
+          $parts = Get-ChildItem zebra-label-studio/v2.8/sourcezip.b64.part* | Sort-Object Name
+          if (!$parts) { throw "Source parts not found" }
+          $b64 = ""
+          foreach ($p in $parts) { $b64 += (Get-Content $p.FullName -Raw).Trim() }
+          $bytes = [Convert]::FromBase64String($b64)
+          [IO.File]::WriteAllBytes("$PWD\zebra-label-studio\v2.8\MSK_Zebra_Label_Studio_v2.8_source.zip", $bytes)
+          New-Item -ItemType Directory -Force zebra-label-studio/v2.8/src | Out-Null
+          Expand-Archive zebra-label-studio/v2.8/MSK_Zebra_Label_Studio_v2.8_source.zip zebra-label-studio/v2.8/src -Force
+
+      - name: Build Zebra Label Studio executables
+        working-directory: zebra-label-studio/v2.8/src
+        run: |
+          $env:GOOS="windows"
+          $env:GOARCH="amd64"
+          $env:CGO_ENABLED="0"
+          go build -trimpath -ldflags="-H windowsgui -s -w" -o ZebraLabelStudio.exe main_windows.go
+          go build -trimpath -ldflags="-H windowsgui -s -w" -o PDFDecoder.exe main_windows.go
+          go build -trimpath -ldflags="-H windowsgui -s -w" -o PrinterWorker.exe printer_worker_windows.go
+          go build -trimpath -ldflags="-H windowsgui -s -w" -o PrinterFinder.exe printer_finder_windows.go
+
+      - name: Build ZXingReader x64
+        run: |
+          git clone --depth 1 --branch v3.1.1 https://github.com/zxing-cpp/zxing-cpp.git zebra-label-studio/v2.8/_zxing
+          cmake -S zebra-label-studio/v2.8/_zxing -B zebra-label-studio/v2.8/_zxing/build -A x64 -DZXING_EXAMPLES=ON -DZXING_EXAMPLES_QT=OFF -DZXING_WRITERS=OFF -DZXING_BLACKBOX_TESTS=OFF -DZXING_UNIT_TESTS=OFF
+          cmake --build zebra-label-studio/v2.8/_zxing/build --config Release --target ZXingReader
+          $reader = Get-ChildItem zebra-label-studio/v2.8/_zxing/build -Recurse -Filter ZXingReader.exe | Select-Object -First 1
+          if (!$reader) { throw "ZXingReader.exe not found" }
+          New-Item -ItemType Directory -Force zebra-label-studio/v2.8/src/runtime/tools/zxing | Out-Null
+          Copy-Item $reader.FullName zebra-label-studio/v2.8/src/runtime/tools/zxing/ZXingReader.exe
+          $dlls = Get-ChildItem $reader.Directory.FullName -Filter *.dll -ErrorAction SilentlyContinue
+          if ($dlls) { Copy-Item $dlls.FullName zebra-label-studio/v2.8/src/runtime/tools/zxing/ }
+
+      - name: Add portable Poppler PDF engine
+        run: |
+          $url = "https://github.com/oschwartz10612/poppler-windows/releases/download/v26.09.0-0/Release-26.09.0-0.zip"
+          Invoke-WebRequest -Uri $url -OutFile zebra-label-studio/v2.8/poppler.zip
+          Expand-Archive zebra-label-studio/v2.8/poppler.zip zebra-label-studio/v2.8/_poppler -Force
+          $root = Get-ChildItem zebra-label-studio/v2.8/_poppler -Directory | Select-Object -First 1
+          if (!$root) { throw "Poppler archive layout unexpected" }
+          New-Item -ItemType Directory -Force zebra-label-studio/v2.8/src/runtime/tools/poppler | Out-Null
+          Copy-Item "$($root.FullName)\*" zebra-label-studio/v2.8/src/runtime/tools/poppler -Recurse
+          if (!(Test-Path zebra-label-studio/v2.8/src/runtime/tools/poppler/Library/bin/pdfinfo.exe)) { throw "pdfinfo.exe not found" }
+          if (!(Test-Path zebra-label-studio/v2.8/src/runtime/tools/poppler/Library/bin/pdftoppm.exe)) { throw "pdftoppm.exe not found" }
+
+      - name: Pack runtime with correct root
+        working-directory: zebra-label-studio/v2.8/src
+        run: |
+          if (Test-Path runtime.zip) { Remove-Item runtime.zip -Force }
+          Compress-Archive -Path runtime/tools -DestinationPath runtime.zip -Force
+          $entries = tar -tf runtime.zip
+          if (-not ($entries -match "tools/poppler/Library/bin/pdfinfo.exe")) { throw "runtime.zip has wrong root" }
+
+      - name: Build installer
+        working-directory: zebra-label-studio/v2.8/src
+        run: |
+          $env:GOOS="windows"
+          $env:GOARCH="amd64"
+          $env:CGO_ENABLED="0"
+          go build -trimpath -ldflags="-H windowsgui -s -w" -o MSK_Zebra_Label_Studio_Setup_v2.8.exe setup_windows.go
+          if (!(Test-Path MSK_Zebra_Label_Studio_Setup_v2.8.exe)) { throw "Setup was not created" }
+
+      - name: Create portable package
+        working-directory: zebra-label-studio/v2.8/src
+        run: |
+          New-Item -ItemType Directory -Force portable | Out-Null
+          Copy-Item ZebraLabelStudio.exe,PDFDecoder.exe,PrinterWorker.exe,PrinterFinder.exe,TextEditor.ps1,README_v2.8.txt portable/
+          Copy-Item runtime/tools portable/tools -Recurse
+          Compress-Archive -Path portable/* -DestinationPath MSK_Zebra_Label_Studio_Portable_v2.8.zip -Force
+
+      - name: SHA-256
+        working-directory: zebra-label-studio/v2.8/src
+        run: |
+          Get-FileHash MSK_Zebra_Label_Studio_Setup_v2.8.exe -Algorithm SHA256 | ForEach-Object { "$($_.Hash.ToLower())  MSK_Zebra_Label_Studio_Setup_v2.8.exe" } | Set-Content SHA256_v2.8.txt
+          Get-FileHash MSK_Zebra_Label_Studio_Portable_v2.8.zip -Algorithm SHA256 | ForEach-Object { "$($_.Hash.ToLower())  MSK_Zebra_Label_Studio_Portable_v2.8.zip" } | Add-Content SHA256_v2.8.txt
+          Get-FileHash ../MSK_Zebra_Label_Studio_v2.8_source.zip -Algorithm SHA256 | ForEach-Object { "$($_.Hash.ToLower())  MSK_Zebra_Label_Studio_v2.8_source.zip" } | Add-Content SHA256_v2.8.txt
+
+      - name: Upload setup artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: MSK_Zebra_Label_Studio_Setup_v2.8
+          path: zebra-label-studio/v2.8/src/MSK_Zebra_Label_Studio_Setup_v2.8.exe
+          retention-days: 30
+
+      - name: Publish GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: zebra-label-studio-v2.8
+          name: MSK Zebra Label Studio v2.8
+          body: |
+            v2.8 fixes text preview/UI overlap, drag stability and PDF runtime packaging.
+          files: |
+            zebra-label-studio/v2.8/src/MSK_Zebra_Label_Studio_Setup_v2.8.exe
+            zebra-label-studio/v2.8/src/MSK_Zebra_Label_Studio_Portable_v2.8.zip
+            zebra-label-studio/v2.8/MSK_Zebra_Label_Studio_v2.8_source.zip
+            zebra-label-studio/v2.8/src/SHA256_v2.8.txt
