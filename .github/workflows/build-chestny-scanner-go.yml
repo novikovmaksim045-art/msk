@@ -1,0 +1,110 @@
+name: Build ChestnyZnakScanner Go Windows
+
+on:
+  push:
+    branches:
+      - build/chestny-scanner-v12
+    paths:
+      - "tools/chestny-scanner-go/**"
+      - ".github/workflows/build-chestny-scanner-go.yml"
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: windows-latest
+    defaults:
+      run:
+        shell: pwsh
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.23.x"
+
+      - name: Prepare Go module
+        working-directory: tools/chestny-scanner-go
+        run: |
+          if (!(Test-Path go.mod)) { go mod init chestnyznakscanner }
+          go get github.com/lxn/walk@latest
+          go mod tidy
+
+      - name: Embed Windows manifest and build GUI EXE
+        working-directory: tools/chestny-scanner-go
+        run: |
+          go install github.com/akavel/rsrc@latest
+          rsrc -manifest app.manifest -ico app.ico -o rsrc.syso
+          $env:GOOS="windows"
+          $env:GOARCH="amd64"
+          $env:CGO_ENABLED="0"
+          go build -trimpath -ldflags="-H windowsgui -s -w" -o dist/ChestnyZnakScanner.exe .
+          if (!(Test-Path dist/ChestnyZnakScanner.exe)) { throw "Go EXE was not created" }
+
+      - name: Build ZXingReader x64
+        run: |
+          git clone --depth 1 --branch v3.1.1 https://github.com/zxing-cpp/zxing-cpp.git tools/chestny-scanner-go/_zxing
+          cmake -S tools/chestny-scanner-go/_zxing -B tools/chestny-scanner-go/_zxing/build -A x64 -DZXING_EXAMPLES=ON -DZXING_EXAMPLES_QT=OFF -DZXING_WRITERS=OFF -DZXING_BLACKBOX_TESTS=OFF -DZXING_UNIT_TESTS=OFF
+          cmake --build tools/chestny-scanner-go/_zxing/build --config Release --target ZXingReader
+          $reader = Get-ChildItem tools/chestny-scanner-go/_zxing/build -Recurse -Filter ZXingReader.exe | Select-Object -First 1
+          if (!$reader) { throw "ZXingReader.exe not found after build" }
+          New-Item -ItemType Directory -Force tools/chestny-scanner-go/dist/tools/zxing | Out-Null
+          Copy-Item $reader.FullName tools/chestny-scanner-go/dist/tools/zxing/ZXingReader.exe
+          $dlls = Get-ChildItem $reader.Directory.FullName -Filter *.dll -ErrorAction SilentlyContinue
+          if ($dlls) { Copy-Item $dlls.FullName tools/chestny-scanner-go/dist/tools/zxing/ }
+
+      - name: Add portable Poppler PDF engine
+        run: |
+          $url = "https://github.com/oschwartz10612/poppler-windows/releases/download/v26.09.0-0/Release-26.09.0-0.zip"
+          Invoke-WebRequest -Uri $url -OutFile tools/chestny-scanner-go/poppler.zip
+          Expand-Archive tools/chestny-scanner-go/poppler.zip tools/chestny-scanner-go/_poppler -Force
+          $root = Get-ChildItem tools/chestny-scanner-go/_poppler -Directory | Select-Object -First 1
+          if (!$root) { throw "Poppler archive layout unexpected" }
+          New-Item -ItemType Directory -Force tools/chestny-scanner-go/dist/tools/poppler | Out-Null
+          Copy-Item "$($root.FullName)\*" tools/chestny-scanner-go/dist/tools/poppler -Recurse
+          if (!(Test-Path tools/chestny-scanner-go/dist/tools/poppler/Library/bin/pdftoppm.exe)) { throw "pdftoppm.exe not found" }
+
+      - name: Add app icon and README
+        working-directory: tools/chestny-scanner-go
+        run: |
+          Copy-Item app.ico dist/app.ico
+          @"
+          Честный знак — сканер КМ 1.3.0
+
+          1. Запустите ChestnyZnakScanner.exe.
+          2. Перетащите PDF/PNG/JPG с DataMatrix в окно.
+          3. Дождитесь разбора кодов.
+          4. Нажмите "Сохранить CSV".
+
+          В CSV сохраняется полный КМ с настоящими разделителями ASCII 29.
+          В поставку уже включены PDF-движок и DataMatrix-сканер.
+          Python, .NET SDK и Inno Setup для запуска не нужны.
+          "@ | Set-Content -Encoding UTF8 dist/README.txt
+
+      - name: Create portable ZIP
+        working-directory: tools/chestny-scanner-go
+        run: |
+          Compress-Archive -Path dist/* -DestinationPath ChestnyZnakScanner_Portable_1.3.0.zip -Force
+
+      - name: Build real Setup.exe
+        working-directory: tools/chestny-scanner-go
+        run: |
+          choco install innosetup -y --no-progress
+          $iscc = "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe"
+          if (!(Test-Path $iscc)) { throw "ISCC.exe not found" }
+          & $iscc installer.iss
+          if (!(Test-Path installer/ChestnyZnakScanner_Setup_1.3.0.exe)) { throw "Setup EXE was not created" }
+
+      - name: Upload portable package
+        uses: actions/upload-artifact@v4
+        with:
+          name: ChestnyZnakScanner_Portable_1.3.0
+          path: tools/chestny-scanner-go/ChestnyZnakScanner_Portable_1.3.0.zip
+          retention-days: 14
+
+      - name: Upload setup
+        uses: actions/upload-artifact@v4
+        with:
+          name: ChestnyZnakScanner_Setup_1.3.0
+          path: tools/chestny-scanner-go/installer/ChestnyZnakScanner_Setup_1.3.0.exe
+          retention-days: 14
