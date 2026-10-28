@@ -38,7 +38,7 @@ var (
 func main() {
     MainWindow{
         AssignTo: &mw,
-        Title: "Честный знак — сканер кодов маркировки 1.3.1",
+        Title: "Честный знак — сканер кодов маркировки 1.3.2",
         MinSize: Size{900, 560},
         Size: Size{1120, 700},
         Layout: VBox{},
@@ -177,6 +177,7 @@ func exportCSV(){
     mu.Lock(); defer mu.Unlock()
     dlg:=new(walk.FileDialog); dlg.Title="Сохранить CSV"; dlg.Filter="CSV (*.csv)|*.csv"; dlg.FilePath="КМ_для_отчета_о_нанесении.csv"
     ok,err:=dlg.ShowSave(mw); if err!=nil||!ok{return}
+    if !strings.EqualFold(filepath.Ext(dlg.FilePath), ".csv") { dlg.FilePath += ".csv" }
     var buf bytes.Buffer; n:=0
     for _,x:=range items{if x.Err==""{buf.WriteString(x.Raw);buf.WriteByte(13);buf.WriteByte(10);n++}}
     if err:=os.WriteFile(dlg.FilePath,buf.Bytes(),0644);err!=nil{walk.MsgBox(mw,"Ошибка",err.Error(),walk.MsgBoxIconError);return}
