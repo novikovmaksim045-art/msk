@@ -1,5 +1,5 @@
 #define MyAppName "Честный знак - сканер КМ"
-#define MyAppVersion "1.3.0"
+#define MyAppVersion "1.3.1"
 #define MyAppExeName "ChestnyZnakScanner.exe"
 
 [Setup]
@@ -10,7 +10,7 @@ DefaultDirName={localappdata}\Programs\ChestnyZnakScanner
 DefaultGroupName={#MyAppName}
 PrivilegesRequired=lowest
 OutputDir=installer
-OutputBaseFilename=ChestnyZnakScanner_Setup_1.3.0
+OutputBaseFilename=ChestnyZnakScanner_Setup_1.3.1
 Compression=lzma2
 SolidCompression=yes
 ArchitecturesAllowed=x64compatible
