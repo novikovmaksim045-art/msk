@@ -18,7 +18,6 @@ ArchitecturesInstallIn64BitMode=x64compatible
 UninstallDisplayIcon={app}\{#MyAppExeName}
 WizardStyle=modern
 DisableProgramGroupPage=yes
-SetupIconFile=app.ico
 
 [Files]
 Source: "dist\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
