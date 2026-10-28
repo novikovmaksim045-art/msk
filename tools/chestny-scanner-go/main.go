@@ -86,8 +86,7 @@ func startScan(paths []string) {
         mw.Synchronize(func(){
             busy=false
             refreshUI()
-            if len(errs)>0 { statusLbl.SetText("Готово, есть ошибки"); walk.MsgBox(mw,"Часть файлов не обработана",strings.Join(errs,"
-"),walk.MsgBoxIconWarning) } else { statusLbl.SetText("Готово") }
+            if len(errs)>0 { statusLbl.SetText("Готово, есть ошибки"); walk.MsgBox(mw,"Часть файлов не обработана",strings.Join(errs,"\\r\\n"),walk.MsgBoxIconWarning) } else { statusLbl.SetText("Готово") }
         })
     }()
 }
@@ -164,15 +163,10 @@ func refreshUI(){
     var sb strings.Builder; ok:=0; bad:=0
     for i,x:=range items{
         st:="OK"; if x.Err!=""{st="ОШИБКА";bad++}else{ok++}
-        fmt.Fprintf(&sb,"%03d  %-6s  %s  стр.%d
-",i+1,st,x.File,x.Page)
-        fmt.Fprintf(&sb,"     GTIN: %s   21: %s   91: %s
-",x.GTIN,x.Serial,x.Key91)
-        if x.Err!=""{fmt.Fprintf(&sb,"     %s
-",x.Err)} else {fmt.Fprintf(&sb,"     92: %s
-",x.Crypto92)}
-        sb.WriteString("
-")
+        fmt.Fprintf(&sb,"%03d  %-6s  %s  стр.%d\\r\\n",i+1,st,x.File,x.Page)
+        fmt.Fprintf(&sb,"     GTIN: %s   21: %s   91: %s\\r\\n",x.GTIN,x.Serial,x.Key91)
+        if x.Err!=""{fmt.Fprintf(&sb,"     %s\\r\\n",x.Err)} else {fmt.Fprintf(&sb,"     92: %s\\r\\n",x.Crypto92)}
+        sb.WriteString("\\r\\n")
     }
     outTE.SetText(sb.String()); countLbl.SetText(fmt.Sprintf("Кодов: %d    корректных: %d    ошибок: %d",len(items),ok,bad)); exportBtn.SetEnabled(!busy && ok>0)
 }
@@ -184,8 +178,7 @@ func exportCSV(){
     dlg:=new(walk.FileDialog); dlg.Title="Сохранить CSV"; dlg.Filter="CSV (*.csv)|*.csv"; dlg.FilePath="КМ_для_отчета_о_нанесении.csv"
     ok,err:=dlg.ShowSave(mw); if err!=nil||!ok{return}
     var buf bytes.Buffer; n:=0
-    for _,x:=range items{if x.Err==""{buf.WriteString(x.Raw);buf.WriteString("
-");n++}}
+    for _,x:=range items{if x.Err==""{buf.WriteString(x.Raw);buf.WriteString("\\r\\n");n++}}
     if err:=os.WriteFile(dlg.FilePath,buf.Bytes(),0644);err!=nil{walk.MsgBox(mw,"Ошибка",err.Error(),walk.MsgBoxIconError);return}
     statusLbl.SetText(fmt.Sprintf("CSV сохранён: %d кодов",n))
 }
