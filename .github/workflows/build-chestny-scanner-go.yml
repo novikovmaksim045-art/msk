@@ -108,3 +108,5 @@ jobs:
           name: ChestnyZnakScanner_Setup_1.3.0
           path: tools/chestny-scanner-go/installer/ChestnyZnakScanner_Setup_1.3.0.exe
           retention-days: 14
+
+# rebuild after Go source fix
