@@ -1,0 +1,98 @@
+name: Build Zebra Label Studio v3.5 PDF FAST Setup
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+    paths:
+      - "zebra-label-studio/v3.5/**"
+      - ".github/workflows/build-zebra-label-studio-v35.yml"
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: windows-latest
+    defaults:
+      run:
+        shell: pwsh
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.23.x"
+
+      - name: Reconstruct source archive
+        run: |
+          $parts = Get-ChildItem zebra-label-studio/v3.5/source.part.* | Sort-Object Name
+          if (!$parts) { throw "Source parts not found" }
+          $b64 = ""
+          foreach ($p in $parts) { $b64 += (Get-Content $p.FullName -Raw).Trim() }
+          $bytes = [Convert]::FromBase64String($b64)
+          [IO.File]::WriteAllBytes("$PWD\zebra-label-studio\v3.5\source.zip", $bytes)
+          New-Item -ItemType Directory -Force zebra-label-studio/v3.5/src | Out-Null
+          Expand-Archive zebra-label-studio/v3.5/source.zip zebra-label-studio/v3.5/src -Force
+
+      - name: Build app executables
+        working-directory: zebra-label-studio/v3.5/src
+        run: |
+          $env:GOOS="windows"
+          $env:GOARCH="amd64"
+          $env:CGO_ENABLED="0"
+          go build -trimpath -ldflags="-H windowsgui -s -w" -o ZebraLabelStudio.exe main_windows.go
+          go build -trimpath -ldflags="-H windowsgui -s -w" -o PDFDecoder.exe pdfdecoder_windows.go
+          go build -trimpath -ldflags="-H windowsgui -s -w" -o PrinterWorker.exe printer_worker_windows.go
+          go build -trimpath -ldflags="-H windowsgui -s -w" -o PrinterFinder.exe printer_finder_windows.go
+
+      - name: Build ZXingReader x64
+        run: |
+          git clone --depth 1 --branch v3.1.1 https://github.com/zxing-cpp/zxing-cpp.git zebra-label-studio/v3.5/_zxing
+          cmake -S zebra-label-studio/v3.5/_zxing -B zebra-label-studio/v3.5/_zxing/build -A x64 -DZXING_EXAMPLES=ON -DZXING_EXAMPLES_QT=OFF -DZXING_WRITERS=OFF -DZXING_BLACKBOX_TESTS=OFF -DZXING_UNIT_TESTS=OFF
+          cmake --build zebra-label-studio/v3.5/_zxing/build --config Release --target ZXingReader
+          $reader = Get-ChildItem zebra-label-studio/v3.5/_zxing/build -Recurse -Filter ZXingReader.exe | Select-Object -First 1
+          if (!$reader) { throw "ZXingReader.exe not found" }
+          New-Item -ItemType Directory -Force zebra-label-studio/v3.5/src/runtime/tools/zxing | Out-Null
+          Copy-Item $reader.FullName zebra-label-studio/v3.5/src/runtime/tools/zxing/ZXingReader.exe
+          $dlls = Get-ChildItem $reader.Directory.FullName -Filter *.dll -ErrorAction SilentlyContinue
+          if ($dlls) { Copy-Item $dlls.FullName zebra-label-studio/v3.5/src/runtime/tools/zxing/ }
+
+      - name: Add Poppler
+        run: |
+          $url = "https://github.com/oschwartz10612/poppler-windows/releases/download/v26.09.0-0/Release-26.09.0-0.zip"
+          Invoke-WebRequest -Uri $url -OutFile zebra-label-studio/v3.5/poppler.zip
+          Expand-Archive zebra-label-studio/v3.5/poppler.zip zebra-label-studio/v3.5/_poppler -Force
+          $root = Get-ChildItem zebra-label-studio/v3.5/_poppler -Directory | Select-Object -First 1
+          if (!$root) { throw "Poppler archive layout unexpected" }
+          New-Item -ItemType Directory -Force zebra-label-studio/v3.5/src/runtime/tools/poppler | Out-Null
+          Copy-Item "$($root.FullName)\*" zebra-label-studio/v3.5/src/runtime/tools/poppler -Recurse
+          if (!(Test-Path zebra-label-studio/v3.5/src/runtime/tools/poppler/Library/bin/pdfinfo.exe)) { throw "pdfinfo.exe not found" }
+          if (!(Test-Path zebra-label-studio/v3.5/src/runtime/tools/poppler/Library/bin/pdftoppm.exe)) { throw "pdftoppm.exe not found" }
+
+      - name: Pack runtime and build setup
+        working-directory: zebra-label-studio/v3.5/src
+        run: |
+          Compress-Archive -Path runtime/tools -DestinationPath runtime.zip -Force
+          $env:GOOS="windows"
+          $env:GOARCH="amd64"
+          $env:CGO_ENABLED="0"
+          go build -trimpath -ldflags="-H windowsgui -s -w" -o MSK_Zebra_Label_Studio_Setup_v3.5_PDF_FAST.exe setup_windows.go
+          if (!(Test-Path MSK_Zebra_Label_Studio_Setup_v3.5_PDF_FAST.exe)) { throw "Setup was not created" }
+
+      - name: Upload setup artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: MSK_Zebra_Label_Studio_Setup_v3.5_PDF_FAST
+          path: zebra-label-studio/v3.5/src/MSK_Zebra_Label_Studio_Setup_v3.5_PDF_FAST.exe
+          retention-days: 30
+
+      - name: Publish release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: zebra-label-studio-v3.5-pdf-fast
+          name: MSK Zebra Label Studio v3.5 PDF FAST
+          body: Fast PDF build. Release contains the Windows installer only.
+          files: zebra-label-studio/v3.5/src/MSK_Zebra_Label_Studio_Setup_v3.5_PDF_FAST.exe
