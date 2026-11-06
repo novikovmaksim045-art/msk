@@ -1,0 +1,33 @@
+name: Build RNKSS presentation PDFs
+
+on:
+  push:
+    paths:
+      - 'presentations/RNKSS/BUILD_TRIGGER'
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Rebuild PDFs from chunks
+        shell: bash
+        run: |
+          set -euo pipefail
+          cat presentations/RNKSS/_chunks/p1/*.part | tr -d '\n' | base64 -d > presentations/RNKSS/RNKSS_presentation_1.pdf
+          cat presentations/RNKSS/_chunks/p2/*.part | tr -d '\n' | base64 -d > presentations/RNKSS/RNKSS_presentation_2.pdf
+          rm -rf presentations/RNKSS/_chunks
+          rm -f presentations/RNKSS/BUILD_TRIGGER
+
+      - name: Commit PDFs
+        shell: bash
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add presentations/RNKSS
+          git commit -m "Add RNKSS presentation PDFs" || exit 0
+          git push
